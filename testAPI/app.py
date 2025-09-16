@@ -12,7 +12,7 @@ app = Flask(__name__)
 
 folder_path = "db"
 
-cached_llm = Ollama(model="llama3")
+cached_llm = Ollama(model="llama3.2")
 
 embedding = FastEmbedEmbeddings()
 

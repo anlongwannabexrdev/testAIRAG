@@ -30,7 +30,7 @@ text_splitter = RecursiveCharacterTextSplitter(
 raw_prompt = PromptTemplate.from_template(
     """ 
     <s>[INST] You are a technical assistant good at searching documents. Just answer based on the context below.
-    Answer in Vietnamese. 
+    Always answer in Vietnamese. 
     If you do not have an answer from the provided information, say so in Vietnamese. [/INST] </s>
     [INST] {input}
            Context: {context}
