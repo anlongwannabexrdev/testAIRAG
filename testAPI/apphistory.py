@@ -1,4 +1,3 @@
-
 from flask import Flask, request
 from langchain_community.llms import Ollama
 from langchain_community.vectorstores import Chroma
@@ -11,7 +10,22 @@ from langchain.prompts import PromptTemplate
 from langchain_core.messages import HumanMessage, AIMessage
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain.chains.history_aware_retriever import create_history_aware_retriever
+from langchain_community.document_loaders import PDFPlumberLoader
 
+from pdf2image import convert_from_path
+import pytesseract
+from langchain.schema import Document
+
+pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
+
+def ocr_pdf(file_path):
+    pages = convert_from_path(file_path, poppler_path=r"C:\poppler-24.07.0\Library\bin")
+    docs = []
+    for i, page in enumerate(pages):
+        text = pytesseract.image_to_string(page, lang='eng+vie')
+        if text.strip():
+            docs.append(Document(page_content=text, metadata={"page": i+1, "source": file_path}))
+    return docs
 
 app = Flask(__name__)
 
@@ -30,7 +44,7 @@ text_splitter = RecursiveCharacterTextSplitter(
 raw_prompt = PromptTemplate.from_template(
     """ 
     <s>[INST] You are a technical assistant good at searching documents. Just answer based on the context below.
-    Always answer in Vietnamese. 
+    Always answer in Vietnamese (include if you do not have any answer). 
     If you do not have an answer from the provided information, say so in Vietnamese. [/INST] </s>
     [INST] {input}
            Context: {context}
@@ -79,10 +93,11 @@ def askPDFPost():
     retriever_prompt = ChatPromptTemplate.from_messages(
         [
             MessagesPlaceholder(variable_name="chat_history"),
+            ("system", "You are a helpful AI in searching documents for users. Always answer in Vietnamese."),
             ("human", "{input}"),
             (
                 "human",
-                "Given the above conversation, generation a search query to lookup in order to get information relevant to the conversation",
+                "Given the above conversation, generation a search query to lookup in order to get information relevant to the conversation. Always answer in Vietnamese.",
             ),
         ]
     )
@@ -102,6 +117,10 @@ def askPDFPost():
 
     # result = chain.invoke({"input": query})
     result = retrieval_chain.invoke({"input": query})
+
+    if not result["context"]:
+        return {"answer": "Xin lỗi, tôi không tìm thấy thông tin phù hợp trong tài liệu.", "sources": []}
+
     print(result["answer"])
     chat_history.append(HumanMessage(content=query))
     chat_history.append(AIMessage(content=result["answer"]))
@@ -124,13 +143,35 @@ def pdfPost():
     file.save(save_file)
     print(f"filename: {file_name}")
 
+    #Load File
     loader = PDFPlumberLoader(save_file)
     docs = loader.load_and_split()
     print(f"docs len={len(docs)}")
 
+    #If dont have text -> fallback to ocr
+    if not docs:
+        #loader = UnstructuredPDFLoader(save_file, strategy="ocr_only")
+        docs = ocr_pdf(save_file)
+        print(f"After OCR docs len={len(docs)}")
+
+    #Split to chunks
     chunks = text_splitter.split_documents(docs)
     print(f"chunks len={len(chunks)}")
 
+    vector_store = Chroma.from_documents(
+        documents=chunks, embedding=embedding, persist_directory=folder_path
+    )
+
+    if not chunks:
+        return {
+            "status": "fail",
+            "filename": file_name,
+            "doc_len": len(docs),
+            "chunks": 0,
+            "error": "Không trích xuất được nội dung từ PDF."
+        }
+    
+    #Save to Chroma
     vector_store = Chroma.from_documents(
         documents=chunks, embedding=embedding, persist_directory=folder_path
     )
